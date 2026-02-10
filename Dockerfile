@@ -7,7 +7,7 @@
 # Run:   docker run -d --name shelly-collector -v $(pwd)/config.json:/app/config.json:ro shelly-collector
 
 # Use official PowerShell 7 image based on Alpine Linux (minimal size)
-FROM mcr.microsoft.com/powershell:7.4-alpine
+FROM mcr.microsoft.com/powershell:7.4-alpine-3.20
 
 # Set working directory
 WORKDIR /app

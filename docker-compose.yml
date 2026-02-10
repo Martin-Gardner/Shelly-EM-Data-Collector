@@ -1,0 +1,127 @@
+version: '3.8'
+
+# Full stack example: Shelly Collector + InfluxDB + Grafana
+# This docker-compose file sets up a complete monitoring solution for Shelly devices
+
+services:
+  # InfluxDB v2 - Time series database
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: shelly-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    environment:
+      # Initial setup - CHANGE THESE VALUES!
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=CHANGE_THIS_PASSWORD_PLEASE
+      - DOCKER_INFLUXDB_INIT_ORG=home
+      - DOCKER_INFLUXDB_INIT_BUCKET=power
+      - DOCKER_INFLUXDB_INIT_RETENTION=30d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=GENERATE_YOUR_SECURE_TOKEN_HERE
+    networks:
+      - shelly-net
+
+  # Shelly Data Collector
+  shelly-collector:
+    build: .
+    container_name: shelly-collector
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    volumes:
+      # Mount your config.json file (create from config.example.json)
+      - ./config.json:/app/config.json:ro
+      # Persistent log directory
+      - ./logs:/app/logs
+    environment:
+      # Optional: Override config.json values with environment variables
+      # Uncomment and set these to override config file values
+      # - INFLUX_URL=http://influxdb:8086
+      # - INFLUX_ORG=home
+      # - INFLUX_BUCKET=power
+      # - INFLUX_TOKEN=my-super-secret-auth-token
+      # - SHELLY_CLOUD_SERVER=https://shelly-001-eu.shelly.cloud
+      # - SHELLY_CLOUD_TOKEN=your-cloud-token
+      - TZ=America/New_York
+    networks:
+      - shelly-net
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: shelly-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=
+    networks:
+      - shelly-net
+    depends_on:
+      - influxdb
+
+networks:
+  shelly-net:
+    driver: bridge
+
+volumes:
+  influxdb-data:
+  influxdb-config:
+  grafana-data:
+
+# Usage Instructions:
+# 
+# 1. Copy config.example.json to config.json and edit with your settings:
+#    cp config.example.json config.json
+#    nano config.json
+#
+# 2. Update InfluxDB settings in config.json:
+#    - Url: http://influxdb:8086 (use service name, not localhost)
+#    - Token: GENERATE_YOUR_SECURE_TOKEN_HERE (or set INFLUX_TOKEN env var)
+#    - IMPORTANT: Change the token in both docker-compose.yml and config.json!
+#
+# 3. Generate a secure token (example):
+#    openssl rand -hex 32
+#
+# 4. Start the stack:
+#    docker-compose up -d
+#
+# 5. Access services:
+#    - InfluxDB: http://localhost:8086
+#    - Grafana: http://localhost:3000 (admin/admin)
+#
+# 6. Configure Grafana:
+#    - Add InfluxDB as data source (Flux query language)
+#    - URL: http://influxdb:8086
+#    - Organization: home
+#    - Token: (use the token you generated)
+#    - Default Bucket: power
+#
+# 7. Example Flux query for Grafana:
+#    from(bucket: "power")
+#      |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+#      |> filter(fn: (r) => r["_measurement"] == "shelly")
+#      |> filter(fn: (r) => r["_field"] == "power")
+#      |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
+#
+# 8. View logs:
+#    docker-compose logs -f shelly-collector
+#
+# 9. Stop the stack:
+#    docker-compose down
+#
+# Security Notes:
+# - REQUIRED: Change all default passwords and tokens before deployment!
+# - Use strong, unique tokens for InfluxDB (generate with: openssl rand -hex 32)
+# - Consider using Docker secrets for production deployments
+# - Restrict network access using firewall rules
+# - Never commit real credentials to version control

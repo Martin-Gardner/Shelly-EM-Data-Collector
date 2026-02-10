@@ -13,7 +13,11 @@ A PowerShell-based data collector for Shelly energy monitoring devices that send
 - **Automatic Device Discovery**: Periodic refresh of cloud devices
 - **Batch Processing**: Efficient cloud API batch queries (up to 10 devices per request)
 - **Health Monitoring**: Generates health check file for monitoring systems
-- **Error Handling**: Robust error handling with logging
+- **Error Handling**: Robust error handling with detailed logging
+- **Environment Variables**: Support for secure credential management via environment variables
+- **Graceful Shutdown**: Proper signal handling for clean stops
+- **Statistics Tracking**: Built-in monitoring of collection success rates
+- **Configuration Validation**: Automatic validation with helpful error messages
 
 ## Supported Shelly Devices
 
@@ -34,7 +38,7 @@ A PowerShell-based data collector for Shelly energy monitoring devices that send
 
 ### 1. Configure the Collector
 
-Edit `config.json` with your settings:
+Edit `config.json` with your settings (or use environment variables):
 
 ```json
 {
@@ -60,6 +64,10 @@ Edit `config.json` with your settings:
   }
 }
 ```
+
+**Security Note**: You can use environment variables instead of storing sensitive values in config.json:
+- `INFLUX_URL`, `INFLUX_ORG`, `INFLUX_BUCKET`, `INFLUX_TOKEN`
+- `SHELLY_CLOUD_SERVER`, `SHELLY_CLOUD_TOKEN`
 
 ### 2. Run the Collector
 
@@ -168,27 +176,37 @@ Run the collector in a Docker container:
 # Build the image
 docker build -t shelly-collector .
 
-# Run the container
+# Run the container with config file
 docker run -d \
   --name shelly-collector \
   --restart unless-stopped \
   -v $(pwd)/config.json:/app/config.json:ro \
   -v $(pwd)/logs:/app/logs \
   shelly-collector
+
+# Or use environment variables for sensitive data
+docker run -d \
+  --name shelly-collector \
+  --restart unless-stopped \
+  -v $(pwd)/config.json:/app/config.json:ro \
+  -e INFLUX_TOKEN=your-secret-token \
+  -e SHELLY_CLOUD_TOKEN=your-cloud-token \
+  shelly-collector
 ```
 
-**Docker Compose Example**:
-```yaml
-version: '3.8'
-services:
-  shelly-collector:
-    build: .
-    restart: unless-stopped
-    volumes:
-      - ./config.json:/app/config.json:ro
-      - ./logs:/app/logs
-    environment:
-      - TZ=America/New_York
+**Docker Compose with Full Stack**:
+
+See `docker-compose.yml` for a complete setup including InfluxDB and Grafana:
+
+```bash
+# Copy and edit config
+cp config.example.json config.json
+
+# Start the full stack
+docker-compose up -d
+
+# View logs
+docker-compose logs -f shelly-collector
 ```
 
 ### Option 3: Telegraf Integration
@@ -247,7 +265,12 @@ The collector creates a `health.txt` file every collection cycle:
 OK 2026-02-10T17:00:00
 ```
 
-Use this file for external monitoring systems (e.g., Nagios, Zabbix, Prometheus).
+The collector also logs statistics periodically (every 100 collections):
+```
+2026-02-10T17:00:00 Stats: 100 collections, 98.0% success rate
+```
+
+Use the health file for external monitoring systems (e.g., Nagios, Zabbix, Prometheus).
 
 **Example health check script**:
 ```powershell
@@ -266,9 +289,17 @@ Logs are written to the file specified in `LogPath` (default: `./collector.log`)
 **Log Format**:
 ```
 2026-02-10T17:00:00 Shelly Collector starting
+2026-02-10T17:00:00 InfluxDB: http://localhost:8086, Org: home, Bucket: power
+2026-02-10T17:00:00 Collection interval: 10 seconds, Device refresh: 10 minutes
+2026-02-10T17:00:00 Starting with 5 devices
 2026-02-10T17:00:00 Refreshing device list
-2026-02-10T17:00:10 Influx write failed
+2026-02-10T17:00:00 Discovered 3 cloud devices
+2026-02-10T17:00:10 Influx write failed: Connection timeout
+2026-02-10T17:00:10 Stats: 100 collections, 98.0% success rate
+2026-02-10T17:00:10 Shelly Collector shutting down gracefully
 ```
+
+Improved error messages now include exception details for easier troubleshooting.
 
 **Log Rotation**: The collector appends to the log file indefinitely. Implement external log rotation:
 
@@ -387,12 +418,38 @@ Logs are written to the file specified in `LogPath` (default: `./collector.log`)
 - **Efficient Refresh**: Device list is cached and refreshed only periodically
 - **Minimal Parsing**: Uses PowerShell native JSON parsing for speed
 - **Error Isolation**: Failures in one device don't affect others
+- **Graceful Shutdown**: Properly handles termination signals for clean shutdown
+
+## Data Visualization with Grafana
+
+The collector stores data in InfluxDB, which integrates seamlessly with Grafana for visualization.
+
+See the [grafana/README.md](grafana/README.md) for:
+- Step-by-step Grafana setup instructions
+- Example Flux queries for common use cases
+- Dashboard panel ideas and configurations
+- Alert rule examples
+- Tips and best practices
+
+**Quick Start with Docker Compose**:
+```bash
+docker-compose up -d
+# Access Grafana at http://localhost:3000 (admin/admin)
+```
+
+The included `docker-compose.yml` sets up the complete stack: Shelly Collector, InfluxDB, and Grafana.
 
 ## Security Best Practices
 
 1. **Protect Tokens**: 
    - Never commit `config.json` with real tokens to version control
-   - Use environment variables or secrets management systems
+   - Use environment variables for sensitive values in production:
+     ```bash
+     export INFLUX_TOKEN="your-secret-token"
+     export SHELLY_CLOUD_TOKEN="your-cloud-token"
+     pwsh ./shelly-collector.ps1
+     ```
+   - Use secrets management systems (e.g., Docker secrets, Kubernetes secrets)
    - Restrict file permissions: `chmod 600 config.json`
 
 2. **Network Security**:
@@ -444,8 +501,15 @@ $listener.Start()
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+Key areas for contribution:
+- Unit tests using Pester
+- Additional device type support
+- Performance optimizations
+- Documentation improvements
+
+Please:
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes with clear commit messages
@@ -454,7 +518,7 @@ Contributions are welcome! Please:
 
 ## License
 
-See repository license file for licensing information.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
