@@ -72,7 +72,6 @@ $script:shouldExit = $false
 
 # Handle Ctrl+C gracefully
 try {
-    [Console]::TreatControlCAsInput = $false
     $null = [Console]::CancelKeyPress.Add({
         param($sender, $e)
         $script:shouldExit = $true
@@ -452,8 +451,8 @@ while (-not $script:shouldExit) {
         # Write health check file for monitoring systems
         "OK $(Get-Date -Format s)" | Out-File ".\health.txt" -Encoding ascii
         
-        # Log statistics periodically
-        if ($script:statsCollections -gt 0 -and ($script:statsCollections % $STATS_LOG_INTERVAL) -eq 0) {
+        # Log statistics periodically (check only when collections count is positive)
+        if (($script:statsCollections -gt 0) -and (($script:statsCollections % $STATS_LOG_INTERVAL) -eq 0)) {
             $successRate = [math]::Round(($script:statsSuccesses / $script:statsCollections) * 100, 1)
             Log "Stats: $script:statsCollections collections, $successRate% success rate"
         }

@@ -15,14 +15,14 @@ services:
       - influxdb-data:/var/lib/influxdb2
       - influxdb-config:/etc/influxdb2
     environment:
-      # Initial setup - change these values!
+      # Initial setup - CHANGE THESE VALUES!
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=changeme123456
+      - DOCKER_INFLUXDB_INIT_PASSWORD=CHANGE_THIS_PASSWORD_PLEASE
       - DOCKER_INFLUXDB_INIT_ORG=home
       - DOCKER_INFLUXDB_INIT_BUCKET=power
       - DOCKER_INFLUXDB_INIT_RETENTION=30d
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=GENERATE_YOUR_SECURE_TOKEN_HERE
     networks:
       - shelly-net
 
@@ -86,37 +86,42 @@ volumes:
 #
 # 2. Update InfluxDB settings in config.json:
 #    - Url: http://influxdb:8086 (use service name, not localhost)
-#    - Token: my-super-secret-auth-token (or set INFLUX_TOKEN env var)
+#    - Token: GENERATE_YOUR_SECURE_TOKEN_HERE (or set INFLUX_TOKEN env var)
+#    - IMPORTANT: Change the token in both docker-compose.yml and config.json!
 #
-# 3. Start the stack:
+# 3. Generate a secure token (example):
+#    openssl rand -hex 32
+#
+# 4. Start the stack:
 #    docker-compose up -d
 #
-# 4. Access services:
+# 5. Access services:
 #    - InfluxDB: http://localhost:8086
 #    - Grafana: http://localhost:3000 (admin/admin)
 #
-# 5. Configure Grafana:
+# 6. Configure Grafana:
 #    - Add InfluxDB as data source (Flux query language)
 #    - URL: http://influxdb:8086
 #    - Organization: home
-#    - Token: my-super-secret-auth-token
+#    - Token: (use the token you generated)
 #    - Default Bucket: power
 #
-# 6. Example Flux query for Grafana:
+# 7. Example Flux query for Grafana:
 #    from(bucket: "power")
 #      |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
 #      |> filter(fn: (r) => r["_measurement"] == "shelly")
 #      |> filter(fn: (r) => r["_field"] == "power")
 #      |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
 #
-# 7. View logs:
+# 8. View logs:
 #    docker-compose logs -f shelly-collector
 #
-# 8. Stop the stack:
+# 9. Stop the stack:
 #    docker-compose down
 #
 # Security Notes:
-# - Change all default passwords before deploying to production
-# - Use strong, unique tokens for InfluxDB
-# - Consider using Docker secrets for sensitive values
+# - REQUIRED: Change all default passwords and tokens before deployment!
+# - Use strong, unique tokens for InfluxDB (generate with: openssl rand -hex 32)
+# - Consider using Docker secrets for production deployments
 # - Restrict network access using firewall rules
+# - Never commit real credentials to version control
