@@ -65,21 +65,31 @@ function Log {
 # Global flag for graceful shutdown
 $script:shouldExit = $false
 
-# Register signal handlers for graceful shutdown
-Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+# Register signal handlers for graceful shutdown using .NET event
+[System.AppDomain]::CurrentDomain.add_ProcessExit({
     $script:shouldExit = $true
-} | Out-Null
+})
 
 # Handle Ctrl+C gracefully
-[Console]::TreatControlCAsInput = $false
-$null = Register-ObjectEvent -InputObject ([Console]) -EventName CancelKeyPress -Action {
-    $script:shouldExit = $true
-    $Event.MessageData.Cancel = $true
+try {
+    [Console]::TreatControlCAsInput = $false
+    $null = [Console]::CancelKeyPress.Add({
+        param($sender, $e)
+        $script:shouldExit = $true
+        $e.Cancel = $true
+    })
+} catch {
+    # Silently ignore if console operations are not available (e.g., in some container environments)
 }
 
 # ============================================================================
 # InfluxDB Configuration
 # ============================================================================
+
+# Configuration constants
+$MAX_INTERVAL_SECONDS = 3600    # Maximum collection interval (1 hour)
+$MAX_REFRESH_MINUTES = 1440     # Maximum device refresh interval (24 hours)
+$STATS_LOG_INTERVAL = 100       # Log statistics every N collections
 
 # Influx connection settings (with environment variable override support)
 $influxUrl    = if ($env:INFLUX_URL) { $env:INFLUX_URL } else { $config.Influx.Url }
@@ -96,13 +106,13 @@ $influxToken  = if ($env:INFLUX_TOKEN) { $env:INFLUX_TOKEN } else { $config.Infl
 if (-not $influxToken) { Write-Error "InfluxDB token not configured"; exit 1 }
 
 $interval     = [int]$config.IntervalSeconds
-if ($interval -lt 1 -or $interval -gt 3600) {
+if ($interval -lt 1 -or $interval -gt $MAX_INTERVAL_SECONDS) {
     Write-Warning "Invalid interval $interval seconds, using default 10 seconds"
     $interval = 10
 }
 
 $refreshMin   = [int]$config.DeviceRefreshMinutes
-if ($refreshMin -lt 1 -or $refreshMin -gt 1440) {
+if ($refreshMin -lt 1 -or $refreshMin -gt $MAX_REFRESH_MINUTES) {
     Write-Warning "Invalid refresh interval $refreshMin minutes, using default 10 minutes"
     $refreshMin = 10
 }
@@ -442,8 +452,8 @@ while (-not $script:shouldExit) {
         # Write health check file for monitoring systems
         "OK $(Get-Date -Format s)" | Out-File ".\health.txt" -Encoding ascii
         
-        # Log statistics periodically (every 100 collections)
-        if ($script:statsCollections -gt 0 -and ($script:statsCollections % 100) -eq 0) {
+        # Log statistics periodically
+        if ($script:statsCollections -gt 0 -and ($script:statsCollections % $STATS_LOG_INTERVAL) -eq 0) {
             $successRate = [math]::Round(($script:statsSuccesses / $script:statsCollections) * 100, 1)
             Log "Stats: $script:statsCollections collections, $successRate% success rate"
         }
