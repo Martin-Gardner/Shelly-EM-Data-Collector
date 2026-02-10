@@ -1,0 +1,34 @@
+# Shelly EM Data Collector - Git Ignore File
+
+# Configuration files with sensitive tokens
+config.json
+
+# Log files
+*.log
+collector.log
+
+# Health check files
+health.txt
+
+# PowerShell module cache
+*.psm1.cache
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker volumes
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
