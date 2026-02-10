@@ -1,0 +1,41 @@
+{
+  "_comment_influx": "InfluxDB v2 connection settings",
+  "Influx": {
+    "Url": "http://127.0.0.1:8086",
+    "_comment_org": "Your InfluxDB organization name",
+    "Org": "home",
+    "_comment_bucket": "Bucket where power data will be stored",
+    "Bucket": "power",
+    "_comment_token": "InfluxDB API token with write access to the bucket",
+    "Token": "YOUR_INFLUX_TOKEN"
+  },
+  "_comment_interval": "How often to collect data from devices (in seconds, recommended: 10-60)",
+  "IntervalSeconds": 10,
+  "_comment_refresh": "How often to refresh the cloud device list (in minutes, recommended: 10-30)",
+  "DeviceRefreshMinutes": 10,
+  "_comment_logpath": "Path to the log file (relative or absolute)",
+  "LogPath": ".\\collector.log",
+  "_comment_local": "Array of local network Shelly devices",
+  "LocalDevices": [
+    {
+      "_comment": "Example: Shelly EM in the kitchen",
+      "Name": "Kitchen_EM",
+      "Url": "http://192.168.1.100/status"
+    },
+    {
+      "_comment": "Example: Shelly 3EM in the garage",
+      "Name": "Garage_3EM",
+      "Url": "http://192.168.1.101/status"
+    }
+  ],
+  "_comment_cloud": "Shelly Cloud API settings for cloud-connected devices",
+  "ShellyCloud": {
+    "_comment_enabled": "Set to false to disable cloud device collection",
+    "Enabled": true,
+    "_comment_server": "Shelly Cloud API server URL (depends on your region)",
+    "_comment_regions": "EU: shelly-001-eu.shelly.cloud, US: shelly-001-us.shelly.cloud, Asia: shelly-001-as.shelly.cloud",
+    "Server": "https://shelly-001-eu.shelly.cloud",
+    "_comment_token": "Shelly Cloud API v2 Bearer token (get from https://control.shelly.cloud settings)",
+    "Token": "YOUR_V2_BEARER_TOKEN"
+  }
+}
