@@ -1,0 +1,18 @@
+
+{
+  "Influx": {
+    "Url": "http://127.0.0.1:8086",
+    "Org": "home",
+    "Bucket": "power",
+    "Token": "YOUR_INFLUX_TOKEN"
+  },
+  "IntervalSeconds": 10,
+  "DeviceRefreshMinutes": 10,
+  "LogPath": ".\\collector.log",
+  "LocalDevices": [],
+  "ShellyCloud": {
+    "Enabled": true,
+    "Server": "https://shelly-001-eu.shelly.cloud",
+    "Token": "YOUR_V2_BEARER_TOKEN"
+  }
+}
