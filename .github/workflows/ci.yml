@@ -1,0 +1,256 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: PowerShell Script Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install PowerShell
+      run: |
+        # Install PowerShell 7
+        sudo apt-get update
+        sudo apt-get install -y wget apt-transport-https software-properties-common
+        wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+        sudo dpkg -i packages-microsoft-prod.deb
+        sudo apt-get update
+        sudo apt-get install -y powershell
+        
+    - name: Install PSScriptAnalyzer
+      shell: pwsh
+      run: |
+        Set-PSRepository PSGallery -InstallationPolicy Trusted
+        Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+        
+    - name: Run PSScriptAnalyzer
+      shell: pwsh
+      run: |
+        $results = Invoke-ScriptAnalyzer -Path ./shelly-collector.ps1 -Severity Warning,Error
+        if ($results) {
+          $results | Format-Table -AutoSize
+          Write-Error "Script analysis found issues"
+          exit 1
+        } else {
+          Write-Host "No issues found!"
+        }
+        
+    - name: Lint install-service.ps1
+      shell: pwsh
+      run: |
+        $results = Invoke-ScriptAnalyzer -Path ./install-service.ps1 -Severity Warning,Error
+        if ($results) {
+          $results | Format-Table -AutoSize
+          Write-Error "Script analysis found issues in install-service.ps1"
+          exit 1
+        } else {
+          Write-Host "No issues found in install-service.ps1!"
+        }
+
+  validate:
+    name: Validate Configuration Files
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Validate JSON files
+      run: |
+        # Validate config.example.json
+        if ! jq empty config.example.json 2>/dev/null; then
+          echo "config.example.json is not valid JSON"
+          exit 1
+        fi
+        echo "✓ config.example.json is valid JSON"
+        
+        # Validate config.json
+        if ! jq empty config.json 2>/dev/null; then
+          echo "config.json is not valid JSON"
+          exit 1
+        fi
+        echo "✓ config.json is valid JSON"
+        
+    - name: Validate Dockerfile
+      run: |
+        # Check Dockerfile exists and has basic structure
+        if [ ! -f Dockerfile ]; then
+          echo "Dockerfile not found"
+          exit 1
+        fi
+        if ! grep -q "FROM" Dockerfile; then
+          echo "Dockerfile missing FROM statement"
+          exit 1
+        fi
+        echo "✓ Dockerfile looks valid"
+
+  test-docker:
+    name: Test Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint, validate]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: shelly-collector:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Test Docker image runs
+      run: |
+        # Create a minimal test config
+        cat > test-config.json << 'EOF'
+        {
+          "Influx": {
+            "Url": "http://test:8086",
+            "Org": "test",
+            "Bucket": "test",
+            "Token": "test"
+          },
+          "IntervalSeconds": 10,
+          "DeviceRefreshMinutes": 10,
+          "LogPath": "./collector.log",
+          "LocalDevices": [],
+          "ShellyCloud": {
+            "Enabled": false,
+            "Server": "https://shelly-001-eu.shelly.cloud",
+            "Token": "test"
+          }
+        }
+        EOF
+        
+        # Run container for a few seconds to verify it starts
+        timeout 5s docker run --rm \
+          -v $(pwd)/test-config.json:/app/config.json:ro \
+          shelly-collector:test || [ $? -eq 124 ]
+        
+        echo "✓ Docker container started successfully"
+
+  test-syntax:
+    name: Test PowerShell Syntax
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install PowerShell
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget
+        wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+        sudo dpkg -i packages-microsoft-prod.deb
+        sudo apt-get update
+        sudo apt-get install -y powershell
+        
+    - name: Test script syntax
+      shell: pwsh
+      run: |
+        # Test main collector script
+        $errors = $null
+        [System.Management.Automation.PSParser]::Tokenize(
+          (Get-Content ./shelly-collector.ps1 -Raw), 
+          [ref]$errors
+        )
+        if ($errors) {
+          Write-Error "Syntax errors found in shelly-collector.ps1:"
+          $errors | Format-Table -AutoSize
+          exit 1
+        }
+        Write-Host "✓ shelly-collector.ps1 syntax is valid"
+        
+        # Test service installer script
+        $errors = $null
+        [System.Management.Automation.PSParser]::Tokenize(
+          (Get-Content ./install-service.ps1 -Raw), 
+          [ref]$errors
+        )
+        if ($errors) {
+          Write-Error "Syntax errors found in install-service.ps1:"
+          $errors | Format-Table -AutoSize
+          exit 1
+        }
+        Write-Host "✓ install-service.ps1 syntax is valid"
+
+  check-docs:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for required documentation
+      run: |
+        # Check for required files
+        for file in README.md CHANGELOG.md CONTRIBUTING.md; do
+          if [ ! -f "$file" ]; then
+            echo "Missing required documentation: $file"
+            exit 1
+          fi
+          echo "✓ Found $file"
+        done
+        
+    - name: Validate Markdown links
+      uses: gaurav-nelson/github-action-markdown-link-check@v1
+      with:
+        use-quiet-mode: 'yes'
+        config-file: '.github/markdown-link-check.json'
+      continue-on-error: true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for secrets in code
+      run: |
+        # Simple check for common secret patterns
+        if grep -r -i "password\s*=\s*['\"]" --include="*.ps1" .; then
+          echo "Warning: Possible hardcoded password found"
+        fi
+        
+        if grep -r -E "token\s*=\s*['\"][^'\"]{20,}" --include="*.ps1" .; then
+          echo "Warning: Possible hardcoded token found"
+        fi
+        
+        echo "✓ Basic security scan complete"
+        
+    - name: Check config.json is in gitignore
+      run: |
+        if ! grep -q "config.json" .gitignore; then
+          echo "Error: config.json should be in .gitignore"
+          exit 1
+        fi
+        echo "✓ config.json is properly ignored"
+
+  all-checks:
+    name: All Checks Passed
+    runs-on: ubuntu-latest
+    needs: [lint, validate, test-docker, test-syntax, check-docs, security-scan]
+    
+    steps:
+    - name: Success
+      run: |
+        echo "🎉 All checks passed successfully!"

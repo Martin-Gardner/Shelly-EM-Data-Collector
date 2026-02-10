@@ -28,7 +28,17 @@ param(
 )
 
 # Load and parse configuration file
-$config = Get-Content $ConfigPath | ConvertFrom-Json
+if (-not (Test-Path $ConfigPath)) {
+    Write-Error "Configuration file not found: $ConfigPath"
+    exit 1
+}
+
+try {
+    $config = Get-Content $ConfigPath -ErrorAction Stop | ConvertFrom-Json
+} catch {
+    Write-Error "Failed to parse configuration file: $_"
+    exit 1
+}
 
 # Set log file path from config or use default
 $logPath = $config.LogPath
@@ -44,21 +54,58 @@ if (-not $logPath) { $logPath = ".\collector.log" }
 function Log {
     param([string]$msg)
     $line = "$(Get-Date -Format s) $msg"
-    $line | Out-File -FilePath $logPath -Append -Encoding utf8
+    try {
+        $line | Out-File -FilePath $logPath -Append -Encoding utf8 -ErrorAction SilentlyContinue
+    } catch {
+        # Silently ignore logging errors to avoid infinite loops
+    }
     Write-Host $line
+}
+
+# Global flag for graceful shutdown
+$script:shouldExit = $false
+
+# Register signal handlers for graceful shutdown
+Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+    $script:shouldExit = $true
+} | Out-Null
+
+# Handle Ctrl+C gracefully
+[Console]::TreatControlCAsInput = $false
+$null = Register-ObjectEvent -InputObject ([Console]) -EventName CancelKeyPress -Action {
+    $script:shouldExit = $true
+    $Event.MessageData.Cancel = $true
 }
 
 # ============================================================================
 # InfluxDB Configuration
 # ============================================================================
 
-# Influx connection settings
-$influxUrl    = $config.Influx.Url.TrimEnd("/")
-$influxOrg    = $config.Influx.Org
-$influxBucket = $config.Influx.Bucket
-$influxToken  = $config.Influx.Token
+# Influx connection settings (with environment variable override support)
+$influxUrl    = if ($env:INFLUX_URL) { $env:INFLUX_URL } else { $config.Influx.Url }
+if (-not $influxUrl) { Write-Error "InfluxDB URL not configured"; exit 1 }
+$influxUrl    = $influxUrl.TrimEnd("/")
+
+$influxOrg    = if ($env:INFLUX_ORG) { $env:INFLUX_ORG } else { $config.Influx.Org }
+if (-not $influxOrg) { Write-Error "InfluxDB organization not configured"; exit 1 }
+
+$influxBucket = if ($env:INFLUX_BUCKET) { $env:INFLUX_BUCKET } else { $config.Influx.Bucket }
+if (-not $influxBucket) { Write-Error "InfluxDB bucket not configured"; exit 1 }
+
+$influxToken  = if ($env:INFLUX_TOKEN) { $env:INFLUX_TOKEN } else { $config.Influx.Token }
+if (-not $influxToken) { Write-Error "InfluxDB token not configured"; exit 1 }
+
 $interval     = [int]$config.IntervalSeconds
+if ($interval -lt 1 -or $interval -gt 3600) {
+    Write-Warning "Invalid interval $interval seconds, using default 10 seconds"
+    $interval = 10
+}
+
 $refreshMin   = [int]$config.DeviceRefreshMinutes
+if ($refreshMin -lt 1 -or $refreshMin -gt 1440) {
+    Write-Warning "Invalid refresh interval $refreshMin minutes, using default 10 minutes"
+    $refreshMin = 10
+}
 
 # Build InfluxDB write URL with query parameters
 $writeUrl = "$influxUrl/api/v2/write?org=$influxOrg&bucket=$influxBucket&precision=s"
@@ -71,14 +118,21 @@ $influxHeaders = @{
 # Shelly Cloud Configuration
 # ============================================================================
 
-# Cloud API settings (if enabled)
+# Cloud API settings (if enabled, with environment variable override support)
 $cloudEnabled = $config.ShellyCloud.Enabled
 if ($cloudEnabled) {
-    $cloudServer = $config.ShellyCloud.Server.TrimEnd("/")
-    $cloudToken  = $config.ShellyCloud.Token
-    $cloudHeaders = @{
-        "Authorization" = "Bearer $cloudToken"
-        "Content-Type"  = "application/json"
+    $cloudServer = if ($env:SHELLY_CLOUD_SERVER) { $env:SHELLY_CLOUD_SERVER } else { $config.ShellyCloud.Server }
+    $cloudToken  = if ($env:SHELLY_CLOUD_TOKEN) { $env:SHELLY_CLOUD_TOKEN } else { $config.ShellyCloud.Token }
+    
+    if (-not $cloudServer -or -not $cloudToken) {
+        Write-Warning "Cloud enabled but server or token not configured, disabling cloud collection"
+        $cloudEnabled = $false
+    } else {
+        $cloudServer = $cloudServer.TrimEnd("/")
+        $cloudHeaders = @{
+            "Authorization" = "Bearer $cloudToken"
+            "Content-Type"  = "application/json"
+        }
     }
 }
 
@@ -92,13 +146,18 @@ if ($cloudEnabled) {
 
 .PARAMETER Line
     InfluxDB line protocol formatted string (e.g., "measurement,tag=value field=123")
+
+.OUTPUTS
+    Boolean indicating success ($true) or failure ($false)
 #>
 function Send-ToInflux {
     param([string]$Line)
     try {
         Invoke-RestMethod -Method Post -Uri $writeUrl -Headers $influxHeaders -Body $Line -TimeoutSec 5 | Out-Null
+        return $true
     } catch {
-        Log "Influx write failed"
+        Log "Influx write failed: $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -153,9 +212,10 @@ function Get-CloudDevices {
                 }
             }
         }
+        Log "Discovered $($devices.Count) cloud devices"
         return $devices
     } catch {
-        Log "Cloud device discovery failed"
+        Log "Cloud device discovery failed: $($_.Exception.Message)"
         return @()
     }
 }
@@ -182,7 +242,7 @@ function Get-CloudStatusBatch {
     try {
         return Invoke-RestMethod -Method Post -Uri $uri -Headers $cloudHeaders -Body $body -TimeoutSec 15
     } catch {
-        Log "Cloud batch query failed"
+        Log "Cloud batch query failed: $($_.Exception.Message)"
         return $null
     }
 }
@@ -206,7 +266,7 @@ function Get-LocalStatus {
     try {
         return Invoke-RestMethod -Uri $device.Url -TimeoutSec 5
     } catch {
-        Log "Local query failed: $($device.Name)"
+        Log "Local query failed for $($device.Name): $($_.Exception.Message)"
         return $null
     }
 }
@@ -305,12 +365,20 @@ function Refresh-Devices {
 # ============================================================================
 
 Log "Shelly Collector starting"
+Log "InfluxDB: $influxUrl, Org: $influxOrg, Bucket: $influxBucket"
+Log "Collection interval: $interval seconds, Device refresh: $refreshMin minutes"
 
 # Initial device discovery
 $devices = Refresh-Devices
 $lastRefresh = Get-Date
+Log "Starting with $($devices.Count) devices"
 
-while ($true) {
+# Statistics tracking
+$script:statsCollections = 0
+$script:statsSuccesses = 0
+$script:statsFailures = 0
+
+while (-not $script:shouldExit) {
 
     # Periodically refresh device list (for cloud device changes)
     if ((Get-Date) -gt $lastRefresh.AddMinutes($refreshMin)) {
@@ -324,16 +392,25 @@ while ($true) {
 
     # Collect data from local devices (sequential queries)
     foreach ($dev in $localDevices) {
+        if ($script:shouldExit) { break }
         $status = Get-LocalStatus -device $dev
         if ($status) {
             $line = Convert-ToInfluxLine -DeviceName $dev.Name -Status $status
-            if ($line) { Send-ToInflux $line }
+            if ($line) { 
+                $script:statsCollections++
+                if (Send-ToInflux $line) {
+                    $script:statsSuccesses++
+                } else {
+                    $script:statsFailures++
+                }
+            }
         }
     }
 
     # Collect data from cloud devices (batch queries of up to 10 devices)
-    if ($cloudDevices.Count -gt 0) {
+    if ($cloudDevices.Count -gt 0 -and -not $script:shouldExit) {
         for ($i = 0; $i -lt $cloudDevices.Count; $i += 10) {
+            if ($script:shouldExit) { break }
             # Get batch of up to 10 devices (Shelly Cloud API limit)
             $batch = $cloudDevices[$i..([math]::Min($i+9, $cloudDevices.Count-1))]
             $ids = $batch | ForEach-Object { $_.Id }
@@ -343,19 +420,38 @@ while ($true) {
             if ($resp -and $resp.data) {
                 # Process each device in the batch
                 foreach ($dev in $batch) {
+                    if ($script:shouldExit) { break }
                     $status = $resp.data.$($dev.Id)
                     if ($status) {
                         $line = Convert-ToInfluxLine -DeviceName $dev.Name -Status $status
-                        if ($line) { Send-ToInflux $line }
+                        if ($line) { 
+                            $script:statsCollections++
+                            if (Send-ToInflux $line) {
+                                $script:statsSuccesses++
+                            } else {
+                                $script:statsFailures++
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    # Write health check file for monitoring systems
-    "OK $(Get-Date -Format s)" | Out-File ".\health.txt" -Encoding ascii
+    if (-not $script:shouldExit) {
+        # Write health check file for monitoring systems
+        "OK $(Get-Date -Format s)" | Out-File ".\health.txt" -Encoding ascii
+        
+        # Log statistics periodically (every 100 collections)
+        if ($script:statsCollections -gt 0 -and ($script:statsCollections % 100) -eq 0) {
+            $successRate = [math]::Round(($script:statsSuccesses / $script:statsCollections) * 100, 1)
+            Log "Stats: $script:statsCollections collections, $successRate% success rate"
+        }
 
-    # Wait for next collection interval
-    Start-Sleep -Seconds $interval
+        # Wait for next collection interval
+        Start-Sleep -Seconds $interval
+    }
 }
+
+Log "Shelly Collector shutting down gracefully"
+Log "Final stats: $script:statsCollections collections, $script:statsSuccesses successes, $script:statsFailures failures"
