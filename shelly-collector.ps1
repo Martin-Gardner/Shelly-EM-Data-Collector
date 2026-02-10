@@ -452,7 +452,7 @@ while (-not $script:shouldExit) {
         "OK $(Get-Date -Format s)" | Out-File ".\health.txt" -Encoding ascii
         
         # Log statistics periodically (check only when collections count is positive)
-        if (($script:statsCollections -gt 0) -and (($script:statsCollections % $STATS_LOG_INTERVAL) -eq 0)) {
+        if ($script:statsCollections -gt 0 -and ($script:statsCollections % $STATS_LOG_INTERVAL) -eq 0) {
             $successRate = [math]::Round(($script:statsSuccesses / $script:statsCollections) * 100, 1)
             Log "Stats: $script:statsCollections collections, $successRate% success rate"
         }
